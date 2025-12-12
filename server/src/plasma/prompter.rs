@@ -61,7 +61,6 @@ pub trait PlasmaPrompter {
 #[derive(Debug, Clone)]
 pub struct PlasmaPrompterCallback {
     service: Service,
-    window_id: String,
     prompt_path: OwnedObjectPath,
     path: OwnedObjectPath,
 }
@@ -100,7 +99,7 @@ impl PlasmaPrompterCallback {
             }
             Reply::Rejected => {
                 tracing::debug!("User rejected the prompt.");
-                self.dismiss().await?;
+                self.send_dismiss().await?;
             }
         }
 
@@ -108,12 +107,14 @@ impl PlasmaPrompterCallback {
     }
 
     #[zbus(signal)]
-    pub async fn cancel(signal_emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+    pub async fn retry(signal_emitter: &SignalEmitter<'_>, reason: &str) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    pub async fn dismiss(signal_emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 }
 
 impl PlasmaPrompterCallback {
     pub async fn new(
-        window_id: String,
         service: Service,
         prompt_path: OwnedObjectPath,
     ) -> Result<Self, oo7::crypto::Error> {
@@ -123,7 +124,6 @@ impl PlasmaPrompterCallback {
                 .unwrap(),
             service,
             prompt_path,
-            window_id,
         })
     }
 
@@ -133,7 +133,6 @@ impl PlasmaPrompterCallback {
 
     // TODO: this is largely duplicated from the gnome prompter. should be shared somehow. not sure how.
     async fn on_reply(&self, prompt: &Prompt, reply: &str) -> Result<(), ServiceError> {
-        let prompter = PlasmaPrompterProxy::new(self.service.connection()).await?;
 
         // Handle each role differently based on what validation/preparation is needed
         match prompt.role() {
@@ -179,19 +178,8 @@ impl PlasmaPrompterCallback {
                 } else {
                     tracing::error!("Keyring {label} failed to unlock, incorrect secret.");
 
-                    let path = self.path.clone();
-                    let window_id = self.window_id.clone();
-                    let collection_name = prompt.label().to_string();
-                    tokio::spawn(async move {
-                        prompter
-                            .UnlockCollectionPrompt(
-                                &path,
-                                window_id.as_str(),
-                                "",
-                                collection_name.as_str(),
-                            )
-                            .await
-                    });
+                    let emitter = SignalEmitter::from_parts(self.service.connection().clone(), self.path().clone());
+                    PlasmaPrompterCallback::retry(&emitter, "The unlock password was incorrect").await?;
 
                     Ok(())
                 }
@@ -229,7 +217,10 @@ impl PlasmaPrompterCallback {
         }
     }
 
-    async fn dismiss(&self) -> Result<(), ServiceError> {
+    async fn send_dismiss(&self) -> Result<(), ServiceError> {
+        let callback_emitter = SignalEmitter::from_parts(self.service.connection().clone(), self.path().clone());
+        PlasmaPrompterCallback::dismiss(&callback_emitter).await?;
+
         let signal_emitter = self.service.signal_emitter(self.prompt_path.clone())?;
         let result = zvariant::Value::new::<Vec<OwnedObjectPath>>(vec![])
             .try_into_owned()

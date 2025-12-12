@@ -102,7 +102,6 @@ impl Prompt {
 
             let window_id = window_id.unwrap_or("").to_string();
             let callback = PlasmaPrompterCallback::new(
-                window_id.clone(),
                 self.service.clone(),
                 self.path.clone(),
             )
@@ -192,7 +191,7 @@ impl Prompt {
                 self.service.connection().clone(),
                 callback_plasma.path().clone(),
             );
-            PlasmaPrompterCallback::Dismiss(&emitter).await?;
+            PlasmaPrompterCallback::dismiss(&emitter).await?;
         }
 
         if let Some(_callback) = self.callback.get() {
