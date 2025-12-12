@@ -1,5 +1,8 @@
 // org.freedesktop.Secret.Prompt
-
+use std::os::unix::io::{IntoRawFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, RawFd};
+use zbus::Guid;
+use zbus::zvariant::{self, Fd};
 use std::{env, future::Future, pin::Pin, str::FromStr, sync::Arc};
 
 use oo7::{Secret, dbus::ServiceError};
@@ -168,7 +171,7 @@ impl Prompt {
     pub async fn dismiss(&self) -> Result<(), ServiceError> {
         if let Some(callback_plasma) = self.callback_plasma.get() {
             let emitter = SignalEmitter::from_parts(self.service.connection().clone(), callback_plasma.path().clone());
-            PlasmaPrompterCallback::cancel(&emitter).await?;
+            PlasmaPrompterCallback::Dismiss(&emitter).await?;
         }
 
         if let Some(_callback) = self.callback.get() {

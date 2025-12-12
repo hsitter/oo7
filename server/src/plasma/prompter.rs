@@ -2,22 +2,20 @@
 // SPDX-FileCopyrightText: 2025 Harald Sitter <sitter@kde.org>
 
 use oo7::dbus::ServiceError;
+
 use serde::{Deserialize, Serialize};
 use zbus::{object_server::SignalEmitter, zvariant::{
-    self, ObjectPath, OwnedObjectPath, Type,
+    self, ObjectPath, OwnedFd, OwnedObjectPath, Type
 }};
-use zbus::zvariant::Fd;
 
-use std::os::fd::{AsRawFd, FromRawFd, RawFd};
-use std::fs::File;
-use std::io::{self, Read};
-use memmap2::Mmap;
-
+use tokio::io::AsyncReadExt;
 use crate::{
     error::custom_service_error,
     prompt::{Prompt, PromptRole},
     service::Service,
 };
+
+use std::os::fd::AsFd;
 
 #[derive(Deserialize, Serialize, Debug, Type)]
 #[serde(rename_all = "lowercase")]
@@ -60,7 +58,7 @@ impl PlasmaPrompterCallback {
     pub async fn result(
         &self,
         type_: Reply,
-        fd: zbus::zvariant::Fd<'_>
+        result_fd: OwnedFd,
     ) -> Result<(), ServiceError> {
         let prompt_path = &self.prompt_path;
         let Some(prompt) = self.service.prompt(prompt_path).await else {
@@ -72,26 +70,17 @@ impl PlasmaPrompterCallback {
         match type_ {
             Reply::Accepted => {
                 tracing::debug!("User accepted the prompt.");
-                let raw_fd: RawFd = fd.as_raw_fd();
-                let file = unsafe { File::from_raw_fd(raw_fd) };
 
-                let mmap = unsafe {
-                    Mmap::map(&file).map_err(|_e| {
-                        ServiceError::NoSuchObject(format!(
-                            "Unable to fetch secretprompter secret."
-                        ))
-                    })?
+                let secret = {
+                    let borrowed_fd = result_fd.as_fd();
+                    let std_stream = std::os::unix::net::UnixStream::from(borrowed_fd.try_clone_to_owned().expect("Failed to clone fd"));
+                    let mut stream = tokio::net::UnixStream::from_std(std_stream).unwrap();
+                    let mut buffer = String::new();
+                    stream.read_to_string(&mut buffer).await.expect("error reading secret");
+                    buffer
                 };
-                let bytes: &[u8] = &mmap[..];
-                let bytes = bytes.strip_suffix(&[0]).unwrap_or(bytes);
-                let secret = std::str::from_utf8(bytes).map_err(|_e| {
-                    ServiceError::NoSuchObject(format!(
-                            "Invalid format for secretprompter secret."
-                        ))
-                    })?;
-                println!("Secret is {}", secret);
 
-                self.on_reply(&prompt, secret).await?;
+                self.on_reply(&prompt, &secret).await?;
             }
             Reply::Rejected => {
                 tracing::debug!("User rejected the prompt.");
