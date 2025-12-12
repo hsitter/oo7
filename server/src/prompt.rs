@@ -101,14 +101,11 @@ impl Prompt {
             };
 
             let window_id = window_id.unwrap_or("").to_string();
-            let callback = PlasmaPrompterCallback::new(
-                self.service.clone(),
-                self.path.clone(),
-            )
-            .await
-            .map_err(|err| {
-                custom_service_error(&format!("Failed to create PrompterCallback {err}."))
-            })?;
+            let callback = PlasmaPrompterCallback::new(self.service.clone(), self.path.clone())
+                .await
+                .map_err(|err| {
+                    custom_service_error(&format!("Failed to create PrompterCallback {err}."))
+                })?;
 
             let path = OwnedObjectPath::from(callback.path().clone());
 

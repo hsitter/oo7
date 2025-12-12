@@ -133,7 +133,6 @@ impl PlasmaPrompterCallback {
 
     // TODO: this is largely duplicated from the gnome prompter. should be shared somehow. not sure how.
     async fn on_reply(&self, prompt: &Prompt, reply: &str) -> Result<(), ServiceError> {
-
         // Handle each role differently based on what validation/preparation is needed
         match prompt.role() {
             PromptRole::Unlock => {
@@ -178,8 +177,12 @@ impl PlasmaPrompterCallback {
                 } else {
                     tracing::error!("Keyring {label} failed to unlock, incorrect secret.");
 
-                    let emitter = SignalEmitter::from_parts(self.service.connection().clone(), self.path().clone());
-                    PlasmaPrompterCallback::retry(&emitter, "The unlock password was incorrect").await?;
+                    let emitter = SignalEmitter::from_parts(
+                        self.service.connection().clone(),
+                        self.path().clone(),
+                    );
+                    PlasmaPrompterCallback::retry(&emitter, "The unlock password was incorrect")
+                        .await?;
 
                     Ok(())
                 }
@@ -218,7 +221,8 @@ impl PlasmaPrompterCallback {
     }
 
     async fn send_dismiss(&self) -> Result<(), ServiceError> {
-        let callback_emitter = SignalEmitter::from_parts(self.service.connection().clone(), self.path().clone());
+        let callback_emitter =
+            SignalEmitter::from_parts(self.service.connection().clone(), self.path().clone());
         PlasmaPrompterCallback::dismiss(&callback_emitter).await?;
 
         let signal_emitter = self.service.signal_emitter(self.prompt_path.clone())?;
