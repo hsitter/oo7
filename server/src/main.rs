@@ -3,10 +3,10 @@ mod collection;
 mod error;
 #[allow(unused)]
 mod gnome;
-mod plasma;
 mod i18n;
 mod item;
 mod pam_listener;
+mod plasma;
 mod prompt;
 mod service;
 mod session;

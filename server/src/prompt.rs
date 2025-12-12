@@ -1,9 +1,9 @@
 // org.freedesktop.Secret.Prompt
-use std::os::unix::io::{IntoRawFd, FromRawFd, OwnedFd};
 use std::os::fd::{AsRawFd, RawFd};
+use std::os::unix::io::{FromRawFd, IntoRawFd, OwnedFd};
+use std::{env, future::Future, pin::Pin, str::FromStr, sync::Arc};
 use zbus::Guid;
 use zbus::zvariant::{self, Fd};
-use std::{env, future::Future, pin::Pin, str::FromStr, sync::Arc};
 
 use oo7::{Secret, dbus::ServiceError};
 use tokio::sync::{Mutex, OnceCell};
@@ -124,14 +124,32 @@ impl Prompt {
             let collection_name = self.label.clone();
             match self.role() {
                 PromptRole::Unlock => {
-                    tokio::spawn(async move { prompter.UnlockCollectionPrompt(&path, window_id.as_str(), "", collection_name.as_str()).await });
-                },
+                    tokio::spawn(async move {
+                        prompter
+                            .UnlockCollectionPrompt(
+                                &path,
+                                window_id.as_str(),
+                                "",
+                                collection_name.as_str(),
+                            )
+                            .await
+                    });
+                }
                 PromptRole::CreateCollection => {
-                    tokio::spawn(async move { prompter.CreateCollectionPrompt(&path, window_id.as_str(), "", collection_name.as_str()).await });
+                    tokio::spawn(async move {
+                        prompter
+                            .CreateCollectionPrompt(
+                                &path,
+                                window_id.as_str(),
+                                "",
+                                collection_name.as_str(),
+                            )
+                            .await
+                    });
                 }
             }
 
-            return Ok(())
+            return Ok(());
         }
 
         if self.callback.get().is_some() {
@@ -170,7 +188,10 @@ impl Prompt {
 
     pub async fn dismiss(&self) -> Result<(), ServiceError> {
         if let Some(callback_plasma) = self.callback_plasma.get() {
-            let emitter = SignalEmitter::from_parts(self.service.connection().clone(), callback_plasma.path().clone());
+            let emitter = SignalEmitter::from_parts(
+                self.service.connection().clone(),
+                callback_plasma.path().clone(),
+            );
             PlasmaPrompterCallback::Dismiss(&emitter).await?;
         }
 

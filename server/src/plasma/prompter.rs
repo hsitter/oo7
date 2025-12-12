@@ -4,16 +4,17 @@
 use oo7::dbus::ServiceError;
 
 use serde::{Deserialize, Serialize};
-use zbus::{object_server::SignalEmitter, zvariant::{
-    self, ObjectPath, OwnedFd, OwnedObjectPath, Type
-}};
+use zbus::{
+    object_server::SignalEmitter,
+    zvariant::{self, ObjectPath, OwnedFd, OwnedObjectPath, Type},
+};
 
-use tokio::io::AsyncReadExt;
 use crate::{
     error::custom_service_error,
     prompt::{Prompt, PromptRole},
     service::Service,
 };
+use tokio::io::AsyncReadExt;
 
 use std::os::fd::AsFd;
 
@@ -41,8 +42,20 @@ pub enum PromptType {
 )]
 pub trait PlasmaPrompter {
     // fn Prompt(&self, request: &ObjectPath<'_>, window_id: &str, title: &str, prompt: &str, type_: PromptType) -> Result<(), ServiceError>;
-    fn UnlockCollectionPrompt(&self, request: &ObjectPath<'_>, window_id: &str, activation_token: &str, collection_name: &str) -> Result<(), ServiceError>;
-    fn CreateCollectionPrompt(&self, request: &ObjectPath<'_>, window_id: &str, activation_token: &str, collection_name: &str) -> Result<(), ServiceError>;
+    fn UnlockCollectionPrompt(
+        &self,
+        request: &ObjectPath<'_>,
+        window_id: &str,
+        activation_token: &str,
+        collection_name: &str,
+    ) -> Result<(), ServiceError>;
+    fn CreateCollectionPrompt(
+        &self,
+        request: &ObjectPath<'_>,
+        window_id: &str,
+        activation_token: &str,
+        collection_name: &str,
+    ) -> Result<(), ServiceError>;
 }
 
 #[derive(Debug, Clone)]
@@ -55,11 +68,7 @@ pub struct PlasmaPrompterCallback {
 
 #[zbus::interface(name = "org.kde.secretprompter.request")]
 impl PlasmaPrompterCallback {
-    pub async fn result(
-        &self,
-        type_: Reply,
-        result_fd: OwnedFd,
-    ) -> Result<(), ServiceError> {
+    pub async fn result(&self, type_: Reply, result_fd: OwnedFd) -> Result<(), ServiceError> {
         let prompt_path = &self.prompt_path;
         let Some(prompt) = self.service.prompt(prompt_path).await else {
             return Err(ServiceError::NoSuchObject(format!(
@@ -73,10 +82,17 @@ impl PlasmaPrompterCallback {
 
                 let secret = {
                     let borrowed_fd = result_fd.as_fd();
-                    let std_stream = std::os::unix::net::UnixStream::from(borrowed_fd.try_clone_to_owned().expect("Failed to clone fd"));
+                    let std_stream = std::os::unix::net::UnixStream::from(
+                        borrowed_fd
+                            .try_clone_to_owned()
+                            .expect("Failed to clone fd"),
+                    );
                     let mut stream = tokio::net::UnixStream::from_std(std_stream).unwrap();
                     let mut buffer = String::new();
-                    stream.read_to_string(&mut buffer).await.expect("error reading secret");
+                    stream
+                        .read_to_string(&mut buffer)
+                        .await
+                        .expect("error reading secret");
                     buffer
                 };
 
@@ -103,7 +119,8 @@ impl PlasmaPrompterCallback {
     ) -> Result<Self, oo7::crypto::Error> {
         let index = service.prompt_index().await;
         Ok(Self {
-            path: OwnedObjectPath::try_from(format!("/org/plasma/keyring/Prompt/p{index}")).unwrap(),
+            path: OwnedObjectPath::try_from(format!("/org/plasma/keyring/Prompt/p{index}"))
+                .unwrap(),
             service,
             prompt_path,
             window_id,
