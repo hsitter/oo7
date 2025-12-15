@@ -1,4 +1,5 @@
 // org.freedesktop.Secret.Prompt
+use ashpd::backend::print;
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::io::{FromRawFd, IntoRawFd, OwnedFd};
 use std::{env, future::Future, pin::Pin, str::FromStr, sync::Arc};

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025 Harald Sitter <sitter@kde.org>
 
+use libc::int32_t;
+use num::traits::int;
 use oo7::dbus::ServiceError;
 
 use serde::{Deserialize, Serialize};
@@ -18,22 +20,6 @@ use tokio::io::AsyncReadExt;
 
 use std::os::fd::AsFd;
 
-#[derive(Deserialize, Serialize, Debug, Type)]
-#[serde(rename_all = "lowercase")]
-#[zvariant(signature = "s")]
-pub enum Reply {
-    Accepted,
-    Rejected,
-}
-
-#[derive(Deserialize, Serialize, Debug, Type)]
-#[serde(rename_all = "lowercase")]
-#[zvariant(signature = "s")]
-pub enum PromptType {
-    Confirm,
-    Password,
-}
-
 #[zbus::proxy(
     default_service = "org.kde.secretprompter",
     interface = "org.kde.secretprompter",
@@ -41,7 +27,6 @@ pub enum PromptType {
     gen_blocking = false
 )]
 pub trait PlasmaPrompter {
-    // fn Prompt(&self, request: &ObjectPath<'_>, window_id: &str, title: &str, prompt: &str, type_: PromptType) -> Result<(), ServiceError>;
     fn UnlockCollectionPrompt(
         &self,
         request: &ObjectPath<'_>,
@@ -67,7 +52,7 @@ pub struct PlasmaPrompterCallback {
 
 #[zbus::interface(name = "org.kde.secretprompter.request")]
 impl PlasmaPrompterCallback {
-    pub async fn result(&self, type_: Reply, result_fd: OwnedFd) -> Result<(), ServiceError> {
+    pub async fn accepted(&self, result_fd: OwnedFd) -> Result<i32, ServiceError> {
         let prompt_path = &self.prompt_path;
         let Some(prompt) = self.service.prompt(prompt_path).await else {
             return Err(ServiceError::NoSuchObject(format!(
@@ -75,33 +60,46 @@ impl PlasmaPrompterCallback {
             )));
         };
 
-        match type_ {
-            Reply::Accepted => {
-                tracing::debug!("User accepted the prompt.");
+        tracing::debug!("User accepted the prompt.");
 
-                let secret = {
-                    let borrowed_fd = result_fd.as_fd();
-                    let std_stream = std::os::unix::net::UnixStream::from(
-                        borrowed_fd
-                            .try_clone_to_owned()
-                            .expect("Failed to clone fd"),
-                    );
-                    let mut stream = tokio::net::UnixStream::from_std(std_stream).unwrap();
-                    let mut buffer = String::new();
-                    stream
-                        .read_to_string(&mut buffer)
-                        .await
-                        .expect("error reading secret");
-                    buffer
-                };
+        let secret = {
+            let borrowed_fd = result_fd.as_fd();
+            let std_stream = std::os::unix::net::UnixStream::from(
+                borrowed_fd
+                    .try_clone_to_owned()
+                    .expect("Failed to clone fd"),
+            );
+            let mut stream = tokio::net::UnixStream::from_std(std_stream).unwrap();
+            let mut buffer = String::new();
+            stream
+                .read_to_string(&mut buffer)
+                .await
+                .expect("error reading secret");
+            buffer
+        };
 
-                self.on_reply(&prompt, &secret).await?;
-            }
-            Reply::Rejected => {
-                tracing::debug!("User rejected the prompt.");
-                self.send_dismiss().await?;
-            }
+        self.on_reply(&prompt, &secret).await
+    }
+
+    pub async fn rejected(&self) -> Result<i32, ServiceError> {
+        tracing::debug!("User rejected the prompt.");
+        Ok(0) // simply dismiss without further action
+    }
+
+    pub async fn dismissed(&self) -> Result<(), ServiceError> {
+        // This is only does check if the prompt is tracked on Service
+        let path = &self.prompt_path;
+        if let Some(prompt) = self.service.prompt(path).await {
+            self.service
+                .object_server()
+                .remove::<Prompt, _>(path)
+                .await?;
+            self.service.remove_prompt(path).await;
         }
+        self.service
+            .object_server()
+            .remove::<Self, _>(&self.path)
+            .await?;
 
         Ok(())
     }
@@ -132,7 +130,7 @@ impl PlasmaPrompterCallback {
     }
 
     // TODO: this is largely duplicated from the gnome prompter. should be shared somehow. not sure how.
-    async fn on_reply(&self, prompt: &Prompt, reply: &str) -> Result<(), ServiceError> {
+    async fn on_reply(&self, prompt: &Prompt, reply: &str) -> Result<i32, ServiceError> {
         // Handle each role differently based on what validation/preparation is needed
         match prompt.role() {
             PromptRole::Unlock => {
@@ -173,7 +171,7 @@ impl PlasmaPrompterCallback {
                         tracing::debug!("Unlock prompt completed.");
                         let _ = Prompt::completed(&signal_emitter, false, result_value).await;
                     });
-                    Ok(())
+                    Ok(0)
                 } else {
                     tracing::error!("Keyring {label} failed to unlock, incorrect secret.");
 
@@ -184,7 +182,7 @@ impl PlasmaPrompterCallback {
                     PlasmaPrompterCallback::retry(&emitter, "The unlock password was incorrect")
                         .await?;
 
-                    Ok(())
+                    Ok(1)
                 }
             }
             PromptRole::CreateCollection => {
@@ -210,7 +208,7 @@ impl PlasmaPrompterCallback {
                                 Prompt::completed(&signal_emitter, false, collection_path_value)
                                     .await;
                         });
-                        Ok(())
+                        Ok(0)
                     }
                     Err(err) => Err(custom_service_error(&format!(
                         "Failed to create collection: {err}."
@@ -218,18 +216,5 @@ impl PlasmaPrompterCallback {
                 }
             }
         }
-    }
-
-    async fn send_dismiss(&self) -> Result<(), ServiceError> {
-        let callback_emitter =
-            SignalEmitter::from_parts(self.service.connection().clone(), self.path().clone());
-        PlasmaPrompterCallback::dismiss(&callback_emitter).await?;
-
-        let signal_emitter = self.service.signal_emitter(self.prompt_path.clone())?;
-        let result = zvariant::Value::new::<Vec<OwnedObjectPath>>(vec![])
-            .try_into_owned()
-            .unwrap();
-        tokio::spawn(async move { Prompt::completed(&signal_emitter, true, result).await });
-        Ok(())
     }
 }
